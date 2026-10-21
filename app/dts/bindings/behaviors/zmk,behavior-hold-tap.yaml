@@ -47,5 +47,9 @@ properties:
     type: array
     required: false
     default: []
+  balanced-key-positions:
+    type: array
+    required: false
+    default: []
   hold-trigger-on-release:
     type: boolean

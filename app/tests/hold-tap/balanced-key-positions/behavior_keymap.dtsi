@@ -1,0 +1,35 @@
+#include <dt-bindings/zmk/keys.h>
+#include <behaviors.dtsi>
+#include <dt-bindings/zmk/kscan_mock.h>
+
+&mt { hold-while-undecided; };
+
+/ {
+    behaviors {
+        ht_bkp: behavior_hold_tap_balanced_key_positions {
+            compatible = "zmk,behavior-hold-tap";
+            #binding-cells = <2>;
+            flavor = "hold-preferred";
+            tapping-term-ms = <200>;
+            bindings = <&kp>, <&kp>;
+            hold-while-undecided;
+            balanced-key-positions = <1 2 3>;
+        };
+    };
+
+    keymap {
+        compatible = "zmk,keymap";
+
+        // positions 1, 2 and 3 are in balanced-key-positions, 4 and 5 are not
+        default_layer {
+            bindings = <
+                &ht_bkp LEFT_GUI COMMA  &kp SPACE  &mt LEFT_SHIFT TAB
+                &kp BACKSPACE           &kp D      &kp E>;
+        };
+    };
+};
+
+&kscan {
+    rows = <2>;
+    columns = <3>;
+};

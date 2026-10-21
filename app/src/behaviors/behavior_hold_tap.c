@@ -63,6 +63,8 @@ struct behavior_hold_tap_config {
     bool hold_while_undecided_linger;
     bool retro_tap;
     bool hold_trigger_on_release;
+    int32_t balanced_key_positions_len;
+    const int32_t *balanced_key_positions;
     int32_t hold_trigger_key_positions_len;
     int32_t hold_trigger_key_positions[];
 };
@@ -89,6 +91,10 @@ struct active_hold_tap {
 
     // initialized to -1, which is to be interpreted as "no other key has been pressed yet"
     int32_t position_of_first_other_key_pressed;
+
+    // whether other keys inside / outside of balanced-key-positions have been pressed down
+    bool balanced_key_pressed;
+    bool non_balanced_key_pressed;
 };
 
 // The undecided hold tap is the hold tap that needs to be decided before
@@ -269,6 +275,8 @@ static struct active_hold_tap *store_hold_tap(struct zmk_behavior_binding_event 
         active_hold_taps[i].param_tap = param_tap;
         active_hold_taps[i].timestamp = event->timestamp;
         active_hold_taps[i].position_of_first_other_key_pressed = -1;
+        active_hold_taps[i].balanced_key_pressed = false;
+        active_hold_taps[i].non_balanced_key_pressed = false;
         return &active_hold_taps[i];
     }
     return NULL;
@@ -525,6 +533,33 @@ static void decide_positional_hold(struct active_hold_tap *hold_tap) {
     hold_tap->status = STATUS_TAP;
 }
 
+static bool is_balanced_key_position(const struct behavior_hold_tap_config *config,
+                                     int32_t position) {
+    for (int i = 0; i < config->balanced_key_positions_len; i++) {
+        if (config->balanced_key_positions[i] == position) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void store_other_key_pressed(struct active_hold_tap *hold_tap, int32_t position) {
+    if (is_balanced_key_position(hold_tap->config, position)) {
+        hold_tap->balanced_key_pressed = true;
+    } else {
+        hold_tap->non_balanced_key_pressed = true;
+    }
+}
+
+// Use the balanced flavor while all other keys pressed so far are in balanced-key-positions.
+// As soon as a key outside of them is pressed, fall back to the configured flavor.
+static enum flavor get_flavor(struct active_hold_tap *hold_tap) {
+    if (hold_tap->balanced_key_pressed && !hold_tap->non_balanced_key_pressed) {
+        return FLAVOR_BALANCED;
+    }
+    return hold_tap->config->flavor;
+}
+
 static void decide_hold_tap(struct active_hold_tap *hold_tap,
                             enum decision_moment decision_moment) {
     if (hold_tap->status != STATUS_UNDECIDED) {
@@ -543,7 +578,8 @@ static void decide_hold_tap(struct active_hold_tap *hold_tap,
     }
 
     // If the hold-tap behavior is still undecided, attempt to decide it.
-    switch (hold_tap->config->flavor) {
+    enum flavor flavor = get_flavor(hold_tap);
+    switch (flavor) {
     case FLAVOR_HOLD_PREFERRED:
         decide_hold_preferred(hold_tap, decision_moment);
         break;
@@ -567,8 +603,7 @@ static void decide_hold_tap(struct active_hold_tap *hold_tap,
     // Since the hold-tap has been decided, clean up undecided_hold_tap and
     // execute the decided behavior.
     LOG_DBG("%d decided %s (%s decision moment %s)", hold_tap->position,
-            status_str(hold_tap->status), flavor_str(hold_tap->config->flavor),
-            decision_moment_str(decision_moment));
+            status_str(hold_tap->status), flavor_str(flavor), decision_moment_str(decision_moment));
     undecided_hold_tap = NULL;
     press_binding(hold_tap);
     release_captured_events();
@@ -781,6 +816,9 @@ static int position_state_changed_listener(const zmk_event_t *eh) {
         .data = {.position = copy_raised_zmk_position_state_changed(ev)},
     };
     capture_event(&capture);
+    if (ev->state) {
+        store_other_key_pressed(undecided_hold_tap, ev->position);
+    }
     decide_hold_tap(undecided_hold_tap, ev->state ? HT_OTHER_KEY_DOWN : HT_OTHER_KEY_UP);
     return ZMK_EV_EVENT_CAPTURED;
 }
@@ -858,6 +896,8 @@ static int behavior_hold_tap_init(const struct device *dev) {
 }
 
 #define KP_INST(n)                                                                                 \
+    static const int32_t behavior_hold_tap_balanced_key_positions_##n[] =                          \
+        DT_INST_PROP(n, balanced_key_positions);                                                   \
     static const struct behavior_hold_tap_config behavior_hold_tap_config_##n = {                  \
         .tapping_term_ms = DT_INST_PROP(n, tapping_term_ms),                                       \
         .hold_behavior_dev = DEVICE_DT_NAME(DT_INST_PHANDLE_BY_IDX(n, bindings, 0)),               \
@@ -871,6 +911,8 @@ static int behavior_hold_tap_init(const struct device *dev) {
         .hold_while_undecided_linger = DT_INST_PROP(n, hold_while_undecided_linger),               \
         .retro_tap = DT_INST_PROP(n, retro_tap),                                                   \
         .hold_trigger_on_release = DT_INST_PROP(n, hold_trigger_on_release),                       \
+        .balanced_key_positions = behavior_hold_tap_balanced_key_positions_##n,                    \
+        .balanced_key_positions_len = DT_INST_PROP_LEN(n, balanced_key_positions),                 \
         .hold_trigger_key_positions = DT_INST_PROP(n, hold_trigger_key_positions),                 \
         .hold_trigger_key_positions_len = DT_INST_PROP_LEN(n, hold_trigger_key_positions),         \
     };                                                                                             \
